@@ -118,10 +118,10 @@ class LandmarkEvaluator {
 
 			double score = (sumscore / npairs);
 			if (verbose) {
-				fprintf (stdout, "npairs %.0f\n", npairs);
-				fprintf (stdout, "avgdiff %.6f\n", sumdiff /npairs);
-				fprintf (stdout, "avgratio %.12f\n", sumratio / npairs);
-				fprintf (stdout, "avgscore %.10f\n", score);
+				fprintf (stderr, "npairs %.0f\n", npairs);
+				fprintf (stderr, "avgdiff %.6f\n", sumdiff /npairs);
+				fprintf (stderr, "avgratio %.12f\n", sumratio / npairs);
+				fprintf (stderr, "avgscore %.10f\n", score);
 			}
 			return score;
 

@@ -5,6 +5,10 @@
 
 #include "typmidas.h"
 #include "binheap.h"
+#include <assert.h>
+#include <vector>
+
+using namespace std;
 
 class Dijkstra {
 private:
@@ -13,6 +17,7 @@ private:
 	TCost *dist;
 	VertexId *parent;
 	VertexId *scanlist;
+	VertexId nscans;
 
 public:
 	Dijkstra(Graph *_g) {
@@ -22,6 +27,8 @@ public:
 		parent = new VertexId[n+1];
 		dist = new TCost[n+1];
 		scanlist = new VertexId[n];
+		for (VertexId v=1; v<=n; v++) {dist[v] = MIDAS_INFINITY;}
+		nscans = 0;
 	}
 
 	~Dijkstra() {
@@ -43,19 +50,33 @@ public:
 	//Run Dijkstra's algorithm from vertex r. Updates the internal state of this
 	//object (with parent, distance, and scan order information). Use the functions
 	//above to query the internal state.
-	void RunDijkstra(VertexId r) {
+	pair<TCost, vector<VertexId> > RunDijkstra(VertexId r, int eps = 0) {
 		bool verbose = false;
 		if (verbose) fprintf (stderr, "Running Dijkstra from %d... ", r);
 		VertexId v, n;
 		n = g->VertexCount(); //vertices have labels from 1 to n
+		if (eps == 0) {
+			eps = n;
+		}
 		if (r<1 || r>n) {
 			fprintf (stderr, "ERROR: Dijkstra's starting vertex %d not in [1,%d].\n", r, n);
 			exit(-1);
 		}
 
-		VertexId nscans = 0;
+		for (int i = 0; i < nscans; i++) {
+			dist[scanlist[i]] = MIDAS_INFINITY;
+		}
+		
+/*		for(int i = 1; i <= n; i++) {
+			dist[i] = MIDAS_INFINITY;
+		} 
+*/		
+		vector<VertexId> vertices;
+		vertices.reserve(eps);
+		nscans = 0;
 		heap->Reset();
-		for (v=1; v<=n; v++) {dist[v] = MIDAS_INFINITY;}
+		
+		TCost ret = 0;
 
 		dist[r] = 0;
 		parent[r] = r;
@@ -67,6 +88,12 @@ public:
 
 			scanlist[nscans] = v;
 			nscans ++;
+
+			if (nscans > eps) {
+				continue;
+			}
+			vertices.push_back(v);	
+			ret = max(ret, dist[v]);
 
 			Arc *a, *end;
 			for (g->GetBounds(v,a,end); a<end; a++) {
@@ -81,11 +108,13 @@ public:
 		}
 		if (verbose) fprintf (stderr, "done (%d nodes visited).\n", nscans);
 
-		if (nscans != g->VertexCount()) {
+		return make_pair(ret, vertices);
+
+/*		if (nscans != g->VertexCount()) {
 			fprintf (stderr, "ERROR: Dijkstra visited only %d/%d vertices.\n", nscans, g->VertexCount());
 			fprintf (stderr, "(Maybe graph is disconnected?)\n");
 			exit(-1);
-		}
+		}*/
 	}
 };
 

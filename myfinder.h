@@ -10,15 +10,914 @@
 #include "graph.h"
 #include "landfind.h"
 #include "evaluator.h"
+#include <vector>
+#include <string>
+#include <assert.h>
+#include <map>
+#include <set>
+
+#define int64 long long
+
+
+#define EVALUATIONNUMBER 1000000
+
+#define POOLSIZE 50 
+#define POOLGENERATIONSIZE 10
+
+#define GREEDYINIT true 
+#define NEIGHBOURHOODRADIUS 1000
+
+#define FACTOR 4
+#define MAXCOVERITERATIONS 10
+
+#define MYTRY 20000
+#define UPPER 10 
+#define POINTS 2048 
+#define LOWERCANDIDATES 1
+#define LOWERITERATIONS 100000000
+#define UPPERCANDIDATES 100
+#define UPPERITERATIONS 100000000 
+
+#define LOCALOPTIMIZEUPPER false 
+#define CORE false 
+#define COREDEPTH 1
+
+#define SUBMISSION true 
+#define MUL ((double)1.2)
+#define FIRSTPHASE 800 
+#define LASTPHASE 1000
+
+int n;
+Dijkstra * dij;
+MIDASTimer * timer;
+vector<VertexId> points;
+Graph * g;
+vector<VertexId> coreVertices;
+vector<TCost> radius;
+LandmarkEvaluator * le;
+vector<VertexId> position;
+vector<VertexId> sortedByRadius;
+
+map<pair<VertexId, VertexId>, int > edgeNumbers;
+int * edgeCover;
+int edges;
+map<int, vector<int> > coveredEdges;
+
+
+vector<VertexId> lowerBoundsPool;
+
+vector<int> getCoveredEdges(VertexId k) {
+	if (coveredEdges.count(k)) {
+		return coveredEdges[k];
+	}
+	dij->RunDijkstra(k);
+	vector<int> ret;
+	ret.reserve(edges);
+	for (VertexId i = 1; i <= n; i++) {
+		Arc * start, * end;	
+		g->GetBounds(i, start, end);
+		for (Arc * a = start; a < end; a++) {
+			VertexId w = a->head;
+			TCost d1 = dij->GetDistance(i);
+			TCost d2 = dij->GetDistance(w);
+			if (d1 > d2) {
+				continue;
+			}
+			if (d2 - d1 == a->cost) {
+				ret.push_back(edgeNumbers[make_pair(i, w)]);		
+			}
+		}	
+	}
+	coveredEdges[k] = ret;
+	return ret;
+}
+
+void addCoveredEdges(int pos, vector<int> addEdges) {
+	for (int i = 0; i < addEdges.size(); i++) {
+		edgeCover[addEdges[i]] |= (1 << pos);
+	}
+}
+
+void addCoveredEdges(int pos, VertexId k) {
+	vector<VertexId> v = getCoveredEdges(k);
+	addCoveredEdges(pos, v);
+}
+
+void removeCoveredEdges(int pos) {
+	for (int i = 1; i <= edges; i++) {
+		edgeCover[i] &= ~(1 << pos);
+	}
+}
+
+int getCoveredEdges() {
+	int ret = 0;
+	for (int i = 1; i <= edges; i++) {
+		if (edgeCover[i]) {
+			ret++;
+		}
+	}
+	return ret;
+}
+
+void myEvaluate(VertexId * list) {
+	le->EvaluateLandmarks(g, 20, list, EVALUATIONNUMBER, true);
+}
+
+vector<TCost> getRadius(int eps) {
+	vector<TCost> ret(n + 1);
+	double dt;
+	for (VertexId v = 1; v <= n; v++) {
+		double t1 = timer->GetElapsedTime();
+		pair<TCost, vector<VertexId> > dijres = dij->RunDijkstra(v, eps);
+		ret[v] = dijres.first;
+		double t2 = timer->GetElapsedTime();
+		dt = t2 - t1;
+	}
+/*	sort(ret.begin(), ret.end());
+	for (int i = 0; i < 10; i++) {
+		cerr << ret[i] << endl;
+	}
+	for (int i = ret.size() - 10; i < ret.size(); i++) {
+		cerr << ret[i] << endl;
+	}*/
+	cerr << "Eps Dijkstra Time = " << dt << endl;
+	return ret;
+}
+
+void getEdgeNumbers() {
+	int cnt = 1;
+	for (VertexId i = 1; i <= n; i++) {
+		Arc * start, * end;	
+		g->GetBounds(i, start, end);
+		for (Arc * a = start; a < end; a++) {
+			VertexId w = a->head;
+			pair<VertexId, VertexId> edge1 = make_pair(i, w);
+			pair<VertexId, VertexId> edge2 = make_pair(w, i);
+			if (!edgeNumbers.count(edge1)) {
+				edgeNumbers[edge1] = cnt;
+				edgeNumbers[edge2] = cnt;
+				cnt++;
+			}
+		}	
+	}
+	cerr << "Edges = " << cnt << endl;
+	edges = cnt;
+	edgeCover = new int[cnt + 1];
+}
+
+vector<int> getDegrees(vector<int> & v) {
+	vector<int> ret(n + 1, 0);
+	for (int i = 1; i <= n; i++) {
+		if (!v[i]) {
+			continue;
+		}
+		Arc * start, * end;	
+		g->GetBounds(i, start, end);
+		for (Arc * a = start; a < end; a++) {
+			VertexId w = a->head;
+			if (v[w]) {
+				ret[w]++;	
+			}
+		}
+	}
+	return ret;
+}
+
+void deleteDegOne(vector<int> & v) {
+	vector<int> deg = getDegrees(v);
+	for (int i = 1; i <= n; i++) {
+		if (deg[i] == 1) {
+			v[i] = 0;
+		}
+	}
+}
+
+vector<VertexId> getCoreVertices(int depth) {
+	vector<int> v(n + 1);
+	for (int i = 1; i <= n; i++) {
+		v[i] = 1;
+	}
+	for (int i = 0; i < depth; i++) {
+		deleteDegOne(v);	
+	}
+	vector<VertexId> ret;
+	ret.reserve(n);
+	for (int i = 1; i <= n; i++) {
+		if (v[i]) {
+			ret.push_back(i);
+		}
+	}
+	return ret;
+}
+
+vector<VertexId> genRandomCheckpoints(int k) {
+	int * perm = new int[n];
+	for (int i = 0; i < n; i++) {
+		perm[i] = i + 1;
+	}
+	random_shuffle(perm, perm + n);
+	vector<VertexId> ret;
+	ret.reserve(k);
+	for (int i = 0; i < k; i++) {
+		ret.push_back(perm[i]);
+	}
+	delete[] perm;
+	return ret;
+}
+
+map<VertexId, vector<TCost> > dict;
+
+void getDist(VertexId k, vector<VertexId> & points, vector<TCost> & v) {
+	if (dict.count(k)) {
+		v = dict[k];
+		return;
+	}
+	dij->RunDijkstra(k);
+	v.clear();
+	v.reserve(points.size());
+	for (int i = 0; i < (int)points.size(); i++) {
+		v.push_back(dij->GetDistance(points[i]));
+	}
+	dict[k] = v;
+}
+
+void dfs(VertexId k, vector<VertexId> * adj, int * l, int64 * s, int * v, TCost * w) {
+	v[k] = 1;
+	s[k] = 0;
+	for (VertexId i = 0; i < (int)adj[k].size(); i++) {
+		VertexId next = adj[k][i];
+		if (!v[next]) {
+			dfs(next, adj, l, s, v, w);
+			if (l[next]) {
+				l[k] = 1;
+			}
+			s[k] += s[next];
+		}
+	}
+	if (l[k]) {
+		s[k] = 0;
+	} else {
+		s[k] += w[k];
+	}
+}
+
+VertexId avoidleaf(VertexId k, int64 * s, vector<VertexId> *& adj) {
+	if ((int)adj[k].size() == 0) {
+		return k;
+	}
+	VertexId bestv = adj[k][0];
+	for (int i = 1; i < (int)adj[k].size(); i++) {
+		VertexId next = adj[k][i];
+		if (s[bestv] < s[next]) {
+			bestv = next;
+		}
+	}
+	return avoidleaf(bestv, s, adj);
+}
+
+void generateAdjacentLists(Dijkstra * dij, vector<VertexId> *& adj) {
+	adj = new vector<VertexId>[n + 1];
+	for (VertexId i = 1; i <= n; i++) {
+		VertexId p = dij->GetParent(i);
+		adj[p].push_back(i);
+	}
+}
+
+VertexId findAvoidVertex(vector<VertexId> have, vector<vector<TCost> > distances) {
+	VertexId r = MTRandom::GetInteger(1, n);
+	TCost * w = new TCost[n + 1];
+	for (VertexId i = 1; i <= n; i++) {
+		w[i] = 0;
+	}
+	for (int i = 0; i < (int)have.size(); i++) {
+		if (distances.empty()) {
+			dij->RunDijkstra(have[i]);
+		}
+		for (VertexId j = 1; j <= n; j++) {
+			TCost d1;
+			TCost d2;
+			if (distances.empty()) {
+				d1 = dij->GetDistance(j);
+				d2 = dij->GetDistance(r);
+			} else {
+				d1 = distances[i][j];
+				d2 = distances[i][r];
+			}
+			TCost lb = (d1 > d2) ? d1 - d2 : d2 - d1;
+			w[j] = max(w[j], lb);
+		}
+	}
+	dij->RunDijkstra(r);
+	for (VertexId i = 1; i <= n; i++) {
+		w[i] = dij->GetDistance(i) - w[i]; 
+	}
+	vector<VertexId> * adj;
+	generateAdjacentLists(dij, adj);
+
+
+	int * l = new int[n + 1];
+	int64 * s = new int64[n + 1];
+	int * v = new int[n + 1];
+
+	for (int i = 1; i <= n; i++) {
+		l[i] = 0;
+		s[i] = 0;
+		v[i] = 0;
+	} 
+
+	for (int i = 0; i < (int)have.size(); i++) {
+		l[have[i]] = 1;	
+	}
+
+	dfs(r, adj, l, s, v, w);
+
+	VertexId bestv = 1;
+	for (VertexId i = 2; i <= n; i++) {
+		if (s[bestv] < s[i]) {
+			bestv = i;
+		}
+	}
+
+	VertexId result = avoidleaf(bestv, s, adj);
+	delete[] l;
+	delete[] s;
+	delete[] v;
+	delete[] adj;
+	delete[] w;
+	return result;
+}
+
+void generateLowerBoundsPool(int poolSize) {
+	cerr << "Generating pool..." << endl;
+	set<VertexId> pool;
+	while (pool.size() < poolSize) {
+		VertexId k = MTRandom::GetInteger(1, n);
+		vector<VertexId> have;
+		have.push_back(k);
+		k = findAvoidVertex(have, vector<vector<TCost> > ());
+		have.pop_back();
+		have.push_back(k);
+		while (have.size() != POOLGENERATIONSIZE) {
+			have.push_back(findAvoidVertex(have, vector<vector<TCost> > ()));
+		}
+		for (int i = 0; i < have.size(); i++) {
+			pool.insert(have[i]);
+		}
+		cerr << pool.size() << endl;
+	}
+	lowerBoundsPool = vector<VertexId>(pool.begin(), pool.end());
+	cerr << "Done..." << endl;
+}
+
+vector<TCost> getDistancesVector(Dijkstra * dij) {
+	vector<TCost> v;
+	v.resize(n + 1);
+	for (int j = 1; j <= n; j++) {
+		v[j] = dij->GetDistance(j);
+	}
+	return v;
+}
+
+double myEvaluation(VertexId * list, int k) {
+	int len = POINTS;
+	vector<TCost> * dist = new vector<TCost>[k];
+	assert(points.size() == len);
+	cerr << "Here 1" << endl;
+	for (int i = 0; i < k; i++) {
+		dij->RunDijkstra(list[i]);
+		dist[i].reserve(len);
+		for (int j = 0; j < len; j++) {
+			dist[i].push_back(dij->GetDistance(points[j]));
+		}
+	}
+	cerr << "Here 2" << endl;
+	double ret;
+	int total = 0;
+	for (int i = 0; i < len; i++) {
+		for (int j = 0; j < i; j++) {
+			int bestlb = 0;
+			int bestub = MIDAS_INFINITY;
+			for (int l = 0; l < k; l++) {
+				bestlb = max(bestlb, abs(dist[l][i] - dist[l][j]));
+				bestub = min(bestub, dist[l][i] + dist[l][j]); 
+			}
+			ret += exp(log(101.0) * bestlb / bestub) - 1;
+			total++;
+		}
+	}
+	cerr << "Here 3" << endl;
+	delete[] dist;
+	return ret / total;
+}
+
+class SubstitutionOptimizer {
+protected:
+	VertexId * myList;
+	int myShift, myK, myCheckpoints, myCandidates;
+	string myName;
+	vector<VertexId> myPoints;
+	vector<TCost> * myMindist;
+	 vector<vector<TCost> >myDistances;
+	vector <int**> myCache;
+	int myLen;
+	vector<bool> myOutdated;
+ 
+public:
+	SubstitutionOptimizer(VertexId * _myList, int _myShift, int _myK, string _myName, vector<VertexId> _myPoints) {
+		myList = _myList;
+		myShift = _myShift;
+		myK = _myK;
+		myCheckpoints = _myPoints.size();
+		myName = _myName;
+		myMindist = new vector<TCost>[myK];
+		myPoints = _myPoints;
+		myDistances.reserve(myK);
+		for (int i = 0; i < myK; i++) {
+			getDist(myList[myShift + i], myPoints, myMindist[i]);
+			dij->RunDijkstra(myList[myShift + i]);
+			vector<TCost> v = getDistancesVector(dij);
+			myDistances.push_back(v);
+		}
+		myLen = myCheckpoints;
+		myCache.reserve(myK);
+		for (int l = 0; l < myK; l++) {
+			int ** cur = new int* [myLen];
+			for (int i = 0; i < myLen; i++) {
+				cur[i] = new int[myLen];
+			}
+			myCache.push_back(cur);
+		}
+		myOutdated.resize(myK);
+		for (int i = 0; i < myK; i++) {
+			myOutdated[i] = true;
+		}
+	}
+	
+	~SubstitutionOptimizer() {
+		for (int i = 0; i < myK; i++) {
+			for (int j = 0; j < myLen; j++) {
+				delete[] myCache[i][j];
+			}
+			delete[] myCache[i];
+		}
+		delete[] myMindist;
+	}
+
+	virtual VertexId genCandidate() = 0;
+	virtual bool iteration() = 0;
+	virtual int initIntValue() = 0;
+	virtual int64 initLongValue() = 0;
+	virtual void updateBest(int64 & best, int64 cur, int & bestpos, int c) = 0;
+	inline virtual int getNewBound(int old, int d1, int d2) = 0;
+
+	void optimize(int iterations, int candidates) {
+		myCandidates = candidates;	
+		int t1 = timer->GetElapsedTime();
+		fprintf(stderr, ("Running " + myName + "...\n").c_str());
+		for (int i = 0; i < iterations; i++) {
+			fprintf(stderr, "Iteration %d...\n", i + 1);
+			if (!iteration()) {
+				break;
+			}
+		}
+		fprintf(stderr, "Done.\n");
+		int t2 = timer->GetElapsedTime();
+		cerr << "Time elapsed: " << t2 - t1 << endl;
+	}
+
+	vector<VertexId> genCandidates() {
+		vector<VertexId> ret;
+		ret.reserve(myCandidates);
+		for (int i = 0; i < myCandidates; i++) {
+			ret.push_back(genCandidate());
+		}
+		return ret;
+	}
+	
+	bool tryCandidates(int pos, vector<VertexId> & candidates) {
+		double t1 = timer->GetElapsedTime();
+		int len = myCheckpoints;
+		int ** dist;
+		if (myOutdated[pos - myShift]) {
+			dist = new int * [len];
+			for (int i = 0; i < len; i++) {
+				dist[i] = new int [len];
+			}
+	//		vector<vector<int> > dist(len, vector<int> (len));
+			for (int i = 0; i < len; i++) {
+				for (int j = 0; j < i; j++) {
+					int & cur = dist[i][j];
+					cur = initIntValue();
+					for (int l = 0; l < pos - myShift; l++) {
+						cur = getNewBound(cur, myMindist[l][i], myMindist[l][j]);
+					}
+					for (int l = pos - myShift + 1; l < myK; l++) {
+						cur = getNewBound(cur, myMindist[l][i], myMindist[l][j]);
+					}
+				}
+			}
+			for (int i = 0; i < len; i++) {
+				delete[] myCache[pos - myShift][i];
+			}
+			delete[] myCache[pos - myShift];
+			myCache[pos - myShift] = dist;
+			myOutdated[pos - myShift] = false;
+		} else {
+			dist = myCache[pos - myShift];
+		}
+		double t15 = timer->GetElapsedTime();
+		candidates.push_back(myList[pos]);
+		int64 best = initLongValue();
+		int bestpos = -1;
+		for (int c = 0; c < (int)candidates.size(); c++) { 
+			VertexId curv = candidates[c];
+			vector<TCost> curDist;
+		
+			getDist(curv, myPoints, curDist);
+			int64 cur = 0;
+			for (int i = 0; i < len; i++) {
+				for (int j = 0; j < i; j++) {
+					cur += getNewBound(dist[i][j], curDist[i], curDist[j]);
+				}
+			}
+			updateBest(best, cur, bestpos, c);
+		}
+		bool ret = false;
+		double t2 = timer->GetElapsedTime();
+		assert(bestpos != -1);
+		if (myList[pos] != candidates[bestpos]) {
+			ret = true;
+			cerr << "Optimized" << endl;	
+			VertexId bestv = candidates[bestpos];
+			vector<TCost> bestDist;
+			getDist(bestv, myPoints, bestDist);
+			myMindist[pos - myShift] = bestDist;
+			myDistances[pos - myShift] = getDistancesVector(dij);
+			myList[pos] = bestv;
+//			myEvaluate(myList);
+//			cerr << "My evaluation = " << myEvaluation(myList, 20) << endl;
+//			for (int i = 0; i < 20; i++) {
+//				cerr << position[myList[i]] << " ";
+//			}
+//			cerr << endl;
+			for (int i = 0; i < myK; i++) {
+				myOutdated[i] = true;
+			}
+		}
+		double t3 = timer->GetElapsedTime();
+		cerr << "Precalc time = " << t15 - t1 << "Check time = " << t2 - t15 << " Dijkstra time = " << t3 - t2 << endl;
+		return ret;
+	}
+};
+
+class LowerSubstitutionOptimizer: public SubstitutionOptimizer {
+private: 
+	vector<VertexId> myLandmarks;
+	vector<vector<TCost> > myLandmarkDistances;
+public:
+	LowerSubstitutionOptimizer(VertexId * _myList, int _myShift, int _myK, string _myName, vector<VertexId> _myPoints) : SubstitutionOptimizer(_myList, _myShift, _myK, _myName, _myPoints){
+	}
+	
+	virtual VertexId genCandidate() {
+//		return MTRandom::GetInteger(1, n);
+		return findAvoidVertex(myLandmarks, myLandmarkDistances);
+//		VertexId v = lowerBoundsPool[MTRandom::GetInteger(1, lowerBoundsPool.size()) - 1];
+//		cerr << v << endl;
+//		return v;
+	}
+
+	virtual bool iteration() {
+/*		for (int i = 0; i < myK; i++) {
+			vector<VertexId> cand = genCandidates();
+			tryCandidates(myShift + i, cand);
+			if (SUBMISSION && timer->GetElapsedTime() > LASTPHASE) {
+				return false;
+			}
+		}
+		return true;*/
+		myLandmarks.clear();
+		myLandmarkDistances.clear();
+		myLandmarkDistances.reserve(myK);
+		for (int i = 0; i < myK; i++) {
+			int rand = MTRandom::GetInteger(1, n);
+			if (rand > n / 2) {
+				myLandmarks.push_back(myList[myShift + i]);
+				myLandmarkDistances.push_back(myDistances[i]);
+			}
+		}
+		double t1 = timer->GetElapsedTime();
+		vector<VertexId> cand = genCandidates();
+		double t2 = timer->GetElapsedTime();
+		for (int i = 0; i < myK; i++) {
+			tryCandidates(myShift + i, cand);
+			if (SUBMISSION && timer->GetElapsedTime() > LASTPHASE) {
+				return false;
+			}
+		}
+		double t3 = timer->GetElapsedTime();
+		cerr << "Generate candidates time = " << t2 - t1 << " Try candidates time = " << t3 - t2 << endl;
+		return true;
+	}
+
+	virtual int initIntValue() {
+		return 0;
+	}
+
+	virtual int64 initLongValue() {
+		return 0;
+	}
+
+	virtual int getNewBound(int old, int d1, int d2) {
+		return max(old, abs(d1 - d2));
+	}
+
+	virtual void updateBest(int64 & best, int64 cur, int & bestpos, int c) {
+		if (best < cur) {
+			best = cur;
+			bestpos = c;
+		}
+	}
+
+};
+
+class UpperSubstitutionOptimizer: public SubstitutionOptimizer {
+public: 
+	UpperSubstitutionOptimizer(VertexId * _myList, int _myShift, int _myK, string _myName, vector<VertexId> _myPoints) : SubstitutionOptimizer(_myList, _myShift, _myK, _myName, _myPoints){
+	}
+	
+	virtual VertexId genCandidate() {
+		return sortedByRadius[MTRandom::GetInteger(1, MYTRY)]; 
+		if (!CORE) {
+			return MTRandom::GetInteger(1, n);
+		} else { 
+			return coreVertices[MTRandom::GetInteger(0, coreVertices.size() - 1)];
+		}
+	}
+	
+	virtual bool iteration() {
+		for (int i = 0; i < myK; i++) {
+			vector<VertexId> cand = genCandidates();
+			tryCandidates(myShift + i, cand);
+			if (SUBMISSION && timer->GetElapsedTime() > FIRSTPHASE) {
+				return false;
+			}
+		}
+		return true;
+	}
+	
+	virtual int initIntValue() {
+		return MIDAS_INFINITY;
+	}
+	
+	virtual int64 initLongValue() {
+		return (int64)MIDAS_INFINITY * (int64)MIDAS_INFINITY;
+	}
+
+	virtual int getNewBound(int old, int d1, int d2) {
+		return min(old, d1 + d2);
+	}
+
+	virtual void updateBest(int64 & best, int64 cur, int & bestpos, int c) {
+		if (best > cur) {
+			best = cur;
+			bestpos = c;
+		}
+	}
+};
 
 class MyLandmarkFinder : public LandmarkFinder {
 	public: 
-		void GenerateMyLandmarks(Graph *g, VertexId k, VertexId *list, MIDASTimer *timer) {
-			fprintf (stderr, "\nMyLandmarkFinder::GenerateMyLandmark called (myfinder.h).\n");
-			fprintf (stderr, "You should modify this function to generate your own landmarks.\n");
-			fprintf (stderr, "Since it's not implemented, generating random landmarks for now.\n\n");
-			this->GenerateRandom(g, k, list, timer);
+	
+		
+	void myGenerateAvoid(VertexId * list, VertexId pos) {
+		fprintf(stderr, "Generating avoid vertex %d...\n", pos + 1);
+		vector<VertexId> have;
+		have.reserve(pos);
+		for (VertexId i = 0; i < pos; i++) {
+			have.push_back(list[i]);
 		}
+		list[pos] = findAvoidVertex(have, vector<vector<TCost> > ());
+		fprintf(stderr, "Done.\n");
+	}
+
+	void myGenerateAvoid(VertexId * list, VertexId pos, VertexId k) {
+		for (int i = 0; i < k; i++) {
+			myGenerateAvoid(list, pos + i);
+		}
+	}
+
+
+	void myGenerateRandom(VertexId * list, VertexId k) { 
+	       fprintf (stderr, "Generating %d random landmarks... \n", k); 
+	       for (VertexId i = 0; i < k; i++) { 
+		       list[i] = MTRandom::GetInteger(1, n); 
+	       } 
+	       fprintf(stderr, "Done.\n"); 
+	} 
+
+	void myGenerateGreedilyWithNeighbourhoods(VertexId * list, VertexId k, int radius) {
+		vector<pair<TCost, VertexId> > v;
+		v.reserve(n);
+		for (VertexId i = 1; i <= n; i++) {
+			pair<TCost, vector<VertexId> > dijres = dij->RunDijkstra(i, radius);
+			v.push_back(make_pair(dijres.first, i));	
+		}
+		sort(v.begin(), v.end());
+		position.resize(n + 1);
+		sortedByRadius.resize(n + 1);
+		for (VertexId i = 1; i <= n; i++) {
+			position[v[i].second] = i;
+			sortedByRadius[i] = v[i].second;
+		}
+		set<VertexId> vis;
+		int pos = 0;
+		for (int i = 0; i < k; i++) {
+			while (vis.count(v[pos].second)) {
+				pos++;
+			}
+			cerr << pos << endl;
+			list[i] = v[pos].second;
+			pair<TCost, vector<VertexId> > dijres = dij->RunDijkstra(v[pos].second, radius);
+			for (int j = 0; j < dijres.second.size(); j++) {
+				vis.insert(dijres.second[j]);
+			}
+		}
+		assert(pos < n);
+	}
+
+	void myOptimizeUpper(VertexId * list, int shift, int k, int iterations, int candidates) {
+		UpperSubstitutionOptimizer uso(list, shift, k, "upper substitution optimizer", points);
+		uso.optimize(iterations, candidates);
+		
+		if (LOCALOPTIMIZEUPPER) {
+			while (true) {
+				bool optimized = false;
+				for (int i = 0; i < k; i++) {
+					vector<VertexId> candidates;
+					Arc * start, * end;
+					g->GetBounds(i, start, end);
+					for (Arc * a = start; a < end; a++) {
+						VertexId w = a->head;
+						candidates.push_back(w);
+					}
+					bool opt = uso.tryCandidates(shift + i, candidates);
+					cerr << list[shift + i] << endl;
+					optimized |= opt;
+					if (opt) {
+						i--;
+					}
+				}
+				if (!optimized) {
+					break;
+				}
+			}
+		}
+	}
+	
+	void myOptimizeLower(VertexId * list, int shift, int k, int iterations, int candidates) {
+		LowerSubstitutionOptimizer lso(list, shift, k, "lower substitution optimizer", points);
+		lso.optimize(iterations, candidates);
+	}
+
+	pair<int, int> getOptimalReplacement(vector<VertexId> v, vector<VertexId> c) {
+		pair<int, int> ret = make_pair(-1, -1);
+		int best = getCoveredEdges();
+		for (int i = 0; i < v.size(); i++) {
+			removeCoveredEdges(i);
+			for (int j = 0; j < c.size(); j++) {
+				addCoveredEdges(i, c[j]);
+				int cur = getCoveredEdges();		
+				if (best < cur) {
+					best = cur;
+					ret = make_pair(i, j);
+				}
+				removeCoveredEdges(i);
+			}
+			addCoveredEdges(i, v[i]);
+		}
+		return ret;
+	}
+
+	void myGenerateMaxCover(VertexId * list, int shift, int k, int factor) {
+		set<VertexId> candidates;
+		vector<VertexId> have;
+		for (int i = 0; i < shift; i++) {
+			have.push_back(list[i]);
+		}
+		for (int i = 0; i < k; i++) {
+			have.push_back(findAvoidVertex(have, vector<vector<TCost> > ()));
+		}
+		for (int i = 0; i < have.size(); i++) {
+			candidates.insert(have[i]);
+		}
+		vector<VertexId> newhave;
+		for (int i = 0; i < k; i++) {
+			newhave.push_back(have[shift + i]);
+		}
+		int iterations = 0;
+		while (1) {
+			if (candidates.size() > factor * k) {
+				break;
+			}
+			vector<VertexId> oldhave = newhave;
+			newhave.clear();
+			for (int i = 0; i < k; i++) {
+				if (MTRandom::GetInteger(1, n) > n / 2) {
+					newhave.push_back(oldhave[i]);
+				}
+			}
+			while (newhave.size() != k) {
+				newhave.push_back(findAvoidVertex(newhave, vector<vector<TCost> > ()));
+				iterations++;
+			}
+			for (int i = 0; i < newhave.size(); i++) {
+				candidates.insert(newhave[i]);
+			}
+			if (iterations > factor * k) {
+				break;
+			}
+		}
+		cerr << "Candidates = " << candidates.size() << endl;
+		vector<VertexId> vcandidates(candidates.begin(), candidates.end());
+		getEdgeNumbers();
+		vector<VertexId> best;
+		int bestcover = 0;
+		for (int it = 0; it < MAXCOVERITERATIONS; it++) {
+			cerr << "MAXCOVER ITERATION = " << it << endl;
+			for (int i = 1; i <= edges; i++) {
+				edgeCover[i] = 0;
+			}
+			set<VertexId> init;
+			while (init.size() != k) {
+				init.insert(vcandidates[MTRandom::GetInteger(1, vcandidates.size()) - 1]);
+			}
+			vector<VertexId> cur(init.begin(), init.end());
+			for (int i = 0; i < cur.size(); i++) {
+				addCoveredEdges(i, cur[i]);	
+			}
+			cerr << getCoveredEdges() << endl;
+			int mycnt = 0;
+			while (1) {
+				cerr << "Replacement iteration = " << mycnt << endl;
+				pair<int, int> p = getOptimalReplacement(cur, vcandidates);
+				if (p == make_pair(-1, -1)) {
+					break;
+				}
+				int pos = p.first;
+				removeCoveredEdges(pos);
+				addCoveredEdges(pos, vcandidates[p.second]);
+				cur[pos] = vcandidates[p.second];
+				cerr << getCoveredEdges() << endl;
+				mycnt++;
+			}
+			int curcover = getCoveredEdges();
+			if (curcover > bestcover) {
+				bestcover = curcover;
+				best = cur;
+			}
+		}
+		assert(best.size() == k);
+		for (int i = 0; i < k; i++) {
+			list[shift + i] = best[i];
+		}
+	}
+
+	void GenerateMyLandmarks(Graph * _g, VertexId k, VertexId *list, MIDASTimer * _timer) {
+		le = new LandmarkEvaluator();
+		g = _g;
+		timer = _timer;
+		n = g->VertexCount();
+		dij = new Dijkstra(g);
+		points = genRandomCheckpoints(POINTS);	
+//		coreVertices = getCoreVertices(COREDEPTH);
+//		cerr << "CORE SIZE = " << coreVertices.size() << endl;
+//		radius = getRadius(100);
+		
+		if (!GREEDYINIT) {
+			this->myGenerateRandom(list, UPPER);
+		} else {
+			this->myGenerateGreedilyWithNeighbourhoods(list, UPPER, NEIGHBOURHOODRADIUS);
+		}
+	
+		this->myGenerateAvoid(list, UPPER, k - UPPER);
+		
+	//	this->myGenerateMaxCover(list, UPPER, k - UPPER, FACTOR);
+	//	return;
+
+//		myEvaluate(list);
+//		cerr << "My evaluation = " << myEvaluation(list, k) << endl;
+
+		this->myOptimizeUpper(list, 0, UPPER, UPPERITERATIONS, UPPERCANDIDATES);
+		
+//		myEvaluate(list);
+//		cerr << "My evaluation = " << myEvaluation(list, k) << endl;
+		
+//		generateLowerBoundsPool(POOLSIZE);
+		this->myOptimizeLower(list, UPPER, k - UPPER, LOWERITERATIONS, LOWERCANDIDATES);
+
+//		myEvaluate(list);
+//		cerr << "My evaluation = " << myEvaluation(list, k) << endl;
+	}
 };
 
 #endif

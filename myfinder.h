@@ -10,6 +10,9 @@
 #include "graph.h"
 #include "landfind.h"
 #include "evaluator.h"
+#include "hhfinder.h"
+#include "vpair.h"
+
 #include <vector>
 #include <string>
 #include <assert.h>
@@ -18,6 +21,14 @@
 
 #define int64 long long
 
+#define HH false 
+#define R false
+#define RAD true
+
+#define HHRADIUS 10
+#define HHCUTOFF 90000
+
+#define CHECKPOINTEVALUATION true
 
 #define EVALUATIONNUMBER 1000000
 
@@ -34,7 +45,7 @@
 #define UPPER 10 
 #define POINTS 2048 
 #define LOWERCANDIDATES 1
-#define LOWERITERATIONS 100000000
+#define LOWERITERATIONS 10000000
 #define UPPERCANDIDATES 100
 #define UPPERITERATIONS 100000000 
 
@@ -54,9 +65,10 @@ vector<VertexId> points;
 Graph * g;
 vector<VertexId> coreVertices;
 vector<TCost> radius;
-LandmarkEvaluator * le;
+//MyLandmarkEvaluator * le;
 vector<VertexId> position;
 vector<VertexId> sortedByRadius;
+vector<VertexId> highwayPoints;
 
 map<pair<VertexId, VertexId>, int > edgeNumbers;
 int * edgeCover;
@@ -65,6 +77,127 @@ map<int, vector<int> > coveredEdges;
 
 
 vector<VertexId> lowerBoundsPool;
+
+class MyLandmarkEvaluator {
+	public:
+		// compute a lower bound on the distance from s to t
+		// using distances to a single landmark
+		inline TCost LowerBound(VertexId s, VertexId t, TCost *landdist) const {
+			TCost ds, dt;
+			ds = landdist[s];
+			dt = landdist[t];
+			TCost answer = (ds > dt) ? ds - dt : dt - ds;
+			return answer;
+		}
+
+		// compute the upper bound on the distance from s to t using distances
+		// to a single landmark
+		inline TCost UpperBound(VertexId s, VertexId t, TCost *landdist) const {
+			return (landdist[s] + landdist[t]);
+		}
+
+		// compute the ratio between the lower and upper bounds
+		// (with a special case when both are zero)
+		inline double ComputeRatio(TCost lower, TCost upper) const {
+			double ratio = 1.0; //ratio equals 1 if they are equal (including both zero)
+			if (upper != lower) { 
+				if (lower < 0) {cerr << "ERROR: " << lower << "is an invalid lower bound.\n"; exit(-1);}
+				ratio = (double)lower / (double)upper;
+			}
+			return ratio;
+		}
+
+		//Compute the score of a particular query, defined as
+		//score = (101^(lower/upper)) - 1
+		inline double ComputeScore(TCost lower, TCost upper) const {
+			double ratio = ComputeRatio(lower, upper);
+			double score = exp (ratio * log (101.0)) - 1;
+			return score;
+		}
+
+
+		//------------------------------------------------------------------------
+		// Evaluate a list of k landmarks (list[0],...,list[k-1]) on npairs random
+		// pairs of distinct vertices. Returns the score for these landmarks.
+		// If 'verbose' is true, outputs the score and other statistics to stdout.
+		// Runs in O(k*m*log n) time (m=number of edges, n=number of vertices).
+		//-----------------------------------------------------------------------*/
+		double EvaluateLandmarks(Graph *g, VertexId k, VertexId *list, double npairs, bool verbose) {
+			VertexId i, n = g->VertexCount();
+
+			//compute distances from each landmark to all vertices
+			TCost **landdist = new TCost*[k];
+			Dijkstra *dijkstra = new Dijkstra(g);
+			for (i=0; i<k; i++) {
+				VertexId v = list[i]; //a landmark
+				dijkstra->RunDijkstra(v);
+				landdist[i] = new TCost[n+1];
+				for (v=1; v<=n; v++) landdist[i][v] = dijkstra->GetDistance(v);
+			}
+			delete dijkstra;
+
+			double score = EvaluateLandmarks(g, k, landdist, npairs, verbose);
+
+			for (i=0; i<k; i++) delete [] landdist[i];
+			delete [] landdist;
+
+			return score;
+		}
+
+
+		//-----------------------------------------------------------------------------------
+		// Evaluates a set of k landmarks on a set of npairs pairs of distinct vertices.
+		// Variable 'landdist' is a matrix representing the distances between all landmarks
+		// and all vertices. "landist[i][v]" must contain the distance between the i-th
+		// landmark (with i=0...k-1) and vertex v (with v=1...n). Runs in O(kn) time.
+		// Returns the score of these landmarks. If verbose=true, outputs the score and
+		// other statistics to stdout.
+		//-----------------------------------------------------------------------------------
+		double EvaluateLandmarks(Graph *g, VertexId k, TCost **landdist, double npairs, bool verbose) {
+			VertexId n = g->VertexCount();
+			double sumratio = 0; //sum of all ratios (lower/upper)
+			double sumdiff = 0;  //sum of all differences (upper - lower)
+			double sumscore = 0; //sum of all scores (101^(lower/upper) - 1)
+
+			for (double p=0; p<npairs; p++) {
+				VertexId s = MTRandom::GetInteger(1,n);
+				VertexId t = MTRandom::GetInteger(1,n);
+				if (s==t) {p--; continue;} //only allow distinct pairs
+
+				//compute current upper and lower bounds
+				TCost upper = MIDAS_INFINITY;
+				TCost lower = 0;
+				for (VertexId i=0; i<k; i++) {
+					TCost curlower = LowerBound(s,t,landdist[i]);
+					TCost curupper = UpperBound(s,t,landdist[i]);
+//					if (curupper < curlower) {
+//						fprintf (stderr, "%d: s:%d %d t:%d %d\n", i,s, landdist[i][s], t, landdist[i][t]);
+//						exit(-1);
+//					}
+					lower = max(lower, curlower);
+					upper = min(upper, curupper);
+				}
+				
+				TCost diff = upper - lower;
+				double ratio = ComputeRatio(lower,upper); //ratio equals 1 if they are equal (including zero)
+				double score = ComputeScore(lower, upper); //exp (ratio * log (101.0)) - 1;
+				
+				sumscore += score;
+				sumratio += ratio;
+				sumdiff += (double)diff;
+			}
+
+			double score = (sumscore / npairs);
+			if (verbose) {
+				fprintf (stderr, "npairs %.0f\n", npairs);
+				fprintf (stderr, "avgdiff %.6f\n", sumdiff /npairs);
+				fprintf (stderr, "avgratio %.12f\n", sumratio / npairs);
+				fprintf (stderr, "avgscore %.10f\n", score);
+			}
+			return score;
+
+		}
+};
 
 vector<int> getCoveredEdges(VertexId k) {
 	if (coveredEdges.count(k)) {
@@ -119,9 +252,9 @@ int getCoveredEdges() {
 	return ret;
 }
 
-void myEvaluate(VertexId * list) {
+/*void myEvaluate(VertexId * list) {
 	le->EvaluateLandmarks(g, 20, list, EVALUATIONNUMBER, true);
-}
+}*/
 
 vector<TCost> getRadius(int eps) {
 	vector<TCost> ret(n + 1);
@@ -417,8 +550,8 @@ protected:
 	string myName;
 	vector<VertexId> myPoints;
 	vector<TCost> * myMindist;
-	 vector<vector<TCost> >myDistances;
-	vector <int**> myCache;
+	vector<vector<TCost> >myDistances;
+	vector <int **> myCache;
 	int myLen;
 	vector<bool> myOutdated;
  
@@ -441,9 +574,9 @@ public:
 		myLen = myCheckpoints;
 		myCache.reserve(myK);
 		for (int l = 0; l < myK; l++) {
-			int ** cur = new int* [myLen];
+			int ** cur = new int * [myLen];
 			for (int i = 0; i < myLen; i++) {
-				cur[i] = new int[myLen];
+				cur[i] = new int [myLen];
 			}
 			myCache.push_back(cur);
 		}
@@ -493,11 +626,34 @@ public:
 		}
 		return ret;
 	}
-	
-	bool tryCandidates(int pos, vector<VertexId> & candidates) {
+
+/*	bool tryCandidatesWithNaiveEvaluation(int pos, vector<VertexId> & candidates) {
+		int len = EVALUATIONNUMBER;
+		int * dist = new int[len];
+		bool ret = false;
+		for (int i = 0; i < len; i++) {
+			int & cur = dist[i];
+			VertexId s = eval[i].first;
+			VertexId t = eval[i].second;
+			for (int j = 0; j < pos - myShift; j++) {
+				cur = getNewBound(cur, myDijkstra[j][s], myDijkstra[j][t]);
+			}
+			for (int j = pos - myShift + 1; j < myK; j++) {
+				cur = getNewBound(cur, myDijkstra[j][s], myDijkstra[j][t]);
+			}
+		}
+		double best = 0;
+		int bestpos = -1;
+
+		delete[] dist;
+		return ret;
+	}*/
+
+	bool tryCandidatesWithCheckpointEvaluation(int pos, vector<VertexId> & candidates) {
 		double t1 = timer->GetElapsedTime();
 		int len = myCheckpoints;
 		int ** dist;
+//		cerr << "Here 0" << endl;
 		if (myOutdated[pos - myShift]) {
 			dist = new int * [len];
 			for (int i = 0; i < len; i++) {
@@ -525,6 +681,7 @@ public:
 		} else {
 			dist = myCache[pos - myShift];
 		}
+//		cerr << "Here 1" << endl;
 		double t15 = timer->GetElapsedTime();
 		candidates.push_back(myList[pos]);
 		int64 best = initLongValue();
@@ -542,6 +699,7 @@ public:
 			}
 			updateBest(best, cur, bestpos, c);
 		}
+//		cerr << "Here 2" << endl;
 		bool ret = false;
 		double t2 = timer->GetElapsedTime();
 		assert(bestpos != -1);
@@ -564,6 +722,7 @@ public:
 				myOutdated[i] = true;
 			}
 		}
+//		cerr << "Here 3" << endl;
 		double t3 = timer->GetElapsedTime();
 		cerr << "Precalc time = " << t15 - t1 << "Check time = " << t2 - t15 << " Dijkstra time = " << t3 - t2 << endl;
 		return ret;
@@ -589,7 +748,7 @@ public:
 	virtual bool iteration() {
 /*		for (int i = 0; i < myK; i++) {
 			vector<VertexId> cand = genCandidates();
-			tryCandidates(myShift + i, cand);
+			tryCandidatesWithCheckpointEvaluation(myShift + i, cand);
 			if (SUBMISSION && timer->GetElapsedTime() > LASTPHASE) {
 				return false;
 			}
@@ -609,7 +768,11 @@ public:
 		vector<VertexId> cand = genCandidates();
 		double t2 = timer->GetElapsedTime();
 		for (int i = 0; i < myK; i++) {
-			tryCandidates(myShift + i, cand);
+			if (CHECKPOINTEVALUATION) {
+				tryCandidatesWithCheckpointEvaluation(myShift + i, cand);
+			} else {
+//				tryCandidatesWithNaiveEvaluation(myShift + i, cand);
+			}
 			if (SUBMISSION && timer->GetElapsedTime() > LASTPHASE) {
 				return false;
 			}
@@ -621,6 +784,7 @@ public:
 
 	virtual int initIntValue() {
 		return 0;
+	
 	}
 
 	virtual int64 initLongValue() {
@@ -628,7 +792,7 @@ public:
 	}
 
 	virtual int getNewBound(int old, int d1, int d2) {
-		return max(old, abs(d1 - d2));
+		return max(old, (abs(d1 - d2)));
 	}
 
 	virtual void updateBest(int64 & best, int64 cur, int & bestpos, int c) {
@@ -646,7 +810,15 @@ public:
 	}
 	
 	virtual VertexId genCandidate() {
-		return sortedByRadius[MTRandom::GetInteger(1, MYTRY)]; 
+		if (HH) {
+			return highwayPoints[MTRandom::GetInteger(1, highwayPoints.size()) - 1];
+		} else if (R) {
+			return MTRandom::GetInteger(1, n);
+		} else if (RAD) {
+			return sortedByRadius[MTRandom::GetInteger(1, MYTRY)]; 
+		} else {
+			assert(false);
+		}
 		if (!CORE) {
 			return MTRandom::GetInteger(1, n);
 		} else { 
@@ -657,7 +829,11 @@ public:
 	virtual bool iteration() {
 		for (int i = 0; i < myK; i++) {
 			vector<VertexId> cand = genCandidates();
-			tryCandidates(myShift + i, cand);
+			if (CHECKPOINTEVALUATION) {
+				tryCandidatesWithCheckpointEvaluation(myShift + i, cand);
+			} else {	
+//				tryCandidatesWithNaiveEvaluation(myShift + i, cand);
+			}
 			if (SUBMISSION && timer->GetElapsedTime() > FIRSTPHASE) {
 				return false;
 			}
@@ -749,7 +925,7 @@ class MyLandmarkFinder : public LandmarkFinder {
 		UpperSubstitutionOptimizer uso(list, shift, k, "upper substitution optimizer", points);
 		uso.optimize(iterations, candidates);
 		
-		if (LOCALOPTIMIZEUPPER) {
+/*		if (LOCALOPTIMIZEUPPER) {
 			while (true) {
 				bool optimized = false;
 				for (int i = 0; i < k; i++) {
@@ -760,7 +936,7 @@ class MyLandmarkFinder : public LandmarkFinder {
 						VertexId w = a->head;
 						candidates.push_back(w);
 					}
-					bool opt = uso.tryCandidates(shift + i, candidates);
+					bool opt = uso.tryCandidatesWithCheckpointEvaluation(shift + i, candidates);
 					cerr << list[shift + i] << endl;
 					optimized |= opt;
 					if (opt) {
@@ -771,7 +947,7 @@ class MyLandmarkFinder : public LandmarkFinder {
 					break;
 				}
 			}
-		}
+		}*/
 	}
 	
 	void myOptimizeLower(VertexId * list, int shift, int k, int iterations, int candidates) {
@@ -883,7 +1059,7 @@ class MyLandmarkFinder : public LandmarkFinder {
 	}
 
 	void GenerateMyLandmarks(Graph * _g, VertexId k, VertexId *list, MIDASTimer * _timer) {
-		le = new LandmarkEvaluator();
+		MyLandmarkEvaluator * le = new MyLandmarkEvaluator();
 		g = _g;
 		timer = _timer;
 		n = g->VertexCount();
@@ -892,7 +1068,113 @@ class MyLandmarkFinder : public LandmarkFinder {
 //		coreVertices = getCoreVertices(COREDEPTH);
 //		cerr << "CORE SIZE = " << coreVertices.size() << endl;
 //		radius = getRadius(100);
-		
+
+/*		Graph * tmp = g;
+		int oldedges = -1;
+		while (1) {
+			if (tmp->EdgeCount() == oldedges) {
+				set<VertexId> vertices;
+				for (int i = 1; i <= n; i++) {
+					Arc * start, * end;	
+					tmp->GetBounds(i, start, end);
+					for (Arc * a = start; a < end; a++) {
+						VertexId w = a->head;
+						vertices.insert(i);
+						vertices.insert(w);
+					}						
+				}
+				cerr << "Vertices = " << vertices.size() << endl;
+				highwayPoints = vector<VertexId>(vertices.begin(), vertices.end());
+				freopen("points.out", "w", stdout);
+				cout << highwayPoints.size() << endl;
+				for (int i = 0; i < highwayPoints.size(); i++) {
+					cout << highwayPoints[i] << " ";
+				}
+				fclose(stdout);
+				break;
+			
+			}
+			oldedges = tmp->EdgeCount();
+			HHFinder * hhf = new HHFinder(tmp, HHRADIUS);
+			set<VertexPair> edges;
+			for (int i = n; i >= 1; i--) {
+				hhf->RunHHFinder(i, edges);	
+			}
+			delete hhf;
+			if (tmp != g) {
+				delete tmp;
+			}
+			VertexPair * pairs = new VertexPair[edges.size()];
+			int i = 0;
+			for(set<VertexPair>::iterator it = edges.begin(); it != edges.end(); it++) {
+				pairs[i++] = *it;
+			}
+			int * vis = new int[n + 1];
+			for (int i = 1; i <= n; i++) {
+				vis[i] = 0;
+			}
+
+			while (1) {
+				bool updated = false;
+				
+				int * cnt = new int[n + 1];
+				for (int i = 1; i <= n; i++) {
+					cnt[i] = 0;
+				}
+
+				for (int i = 0; i < edges.size(); i++) {
+					int v1 = pairs[i].v;
+					int v2 = pairs[i].w;
+					if (!vis[v1] && !vis[v2]) {
+						cnt[v1]++;
+						cnt[v2]++;
+					}
+				}
+			
+				for (int i = 1; i <= n; i++) {
+					if (cnt[i] < 2 && !vis[i]) {
+						vis[i] = 1;
+						updated = true;
+					}
+				}
+
+				delete[] cnt;
+
+				if (!updated) {
+					break;
+				}
+			}
+
+			VertexPair * newedges = new VertexPair[edges.size()];
+			int count = 0;
+			for (int i = 0; i < edges.size(); i++) {
+				int v1 = pairs[i].v;
+				int v2 = pairs[i].w;
+				if (!vis[v1] && !vis[v2]) {
+					newedges[count++] = pairs[i];
+				}
+			}
+
+			tmp = new Graph(count, n);
+			tmp->ProcessPairs(newedges, count);
+			delete[] pairs;
+			delete[] vis;
+			delete[] newedges;
+			cerr << "New edges = " << count << " Edges = " << edges.size() << endl;
+		}
+
+
+*/
+
+		freopen("points.out", "r", stdin);
+		int num;
+		cin >> num;
+		for (int i = 0; i < num; i++) {
+			int tmp;
+			cin >> tmp;
+			highwayPoints.push_back(tmp);
+		}
+
 		if (!GREEDYINIT) {
 			this->myGenerateRandom(list, UPPER);
 		} else {

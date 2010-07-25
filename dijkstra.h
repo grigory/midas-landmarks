@@ -46,7 +46,7 @@ public:
 
 	//return the i-th vertex scanned (with i=0...n-1)
 	inline VertexId GetScannedVertex(VertexId i) const {return scanlist[i];}
-
+	
 	//Run Dijkstra's algorithm from vertex r. Updates the internal state of this
 	//object (with parent, distance, and scan order information). Use the functions
 	//above to query the internal state.

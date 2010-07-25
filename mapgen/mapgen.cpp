@@ -32,6 +32,10 @@ struct point {
 		x = tx;
 		y = ty;
 	}
+
+	void print() {
+		printf("%d %d", x, y);
+	}
 };
 
 #define MAXN 25000000
@@ -56,6 +60,7 @@ int count(int lx, int ly, int rx, int ry) {
 
 #define MAXV 5000000 
 
+int oldindex[MAXV];
 int ind[MAXN];
 int newindex[MAXV];
 vector<pair<int, int> > edges[MAXV];
@@ -153,6 +158,7 @@ void gen(int dx, int dy) {
 		if (vis[i] == maxcolor) {
 			numv++;
 			newindex[i] = numv;
+			oldindex[numv] = i;
 			for (int j = 0; j < edges[i].size(); j++) {
 				int next = edges[i][j].first;
 				if (vis[next] == maxcolor) {
@@ -171,6 +177,12 @@ void gen(int dx, int dy) {
 		for (int j = 0; j < newedges[i].size(); j++) {
 			printf("a %d %d %d\n", i, newindex[newedges[i][j].first], newedges[i][j].second);
 		}
+	}
+	cout << "p aux sp co " << numv << endl; 
+	for (int i = 1; i <= numv; i++) {
+		printf("v %d ", i);
+		a[oldindex[i]].print();
+		cout << endl;
 	}
 	cerr << "Done." << endl;
 	

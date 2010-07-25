@@ -6,7 +6,12 @@
 #include <algorithm>
 #include <stdio.h>
 #include <stdlib.h>
+#include <iostream>
+#include <assert.h>
+
 #include "vpair.h"
+
+using namespace std;
 
 struct Arc {
 	int head; //the 'other' endpoint
@@ -26,13 +31,17 @@ class Graph {
 		// Assumes every arc in vpair is undirected and eliminates 
 		// parallel edges by keeping only the lowest-cost version
 		//----------------------------------------------------------
+	public:
 		void ProcessPairs(VertexPair *vpair, int acount) {
+			cerr << acount << endl;
+//			cerr << "Here 0" << endl;
 			std::sort(&vpair[0], &vpair[acount]);
 			bool verbose = false;
 
 			//eliminate parallel arcs; keep only the cheapest
 			int i,v;
 			int lastgood = 0;
+//			cerr << "Here 1" << endl;
 			for (i=1; i<acount; i++) {
 				if (vpair[i]==vpair[lastgood]) { //arcs have same endpoints
 					if (vpair[lastgood].cost > vpair[i].cost) {
@@ -43,16 +52,21 @@ class Graph {
 					vpair[lastgood] = vpair[i];
 				}
 			}
+//			cerr << "Here 2" << endl;
 			nedges = lastgood + 1;
 			if (verbose) fprintf (stderr, "There are %d edges and %d vertices.\n", nedges, nvertices);
 
 			//compute the degrees of all vertices in the graph
 			int *degree = new int [nvertices+1];
 			for (v=0; v<=nvertices; v++) {degree[v] = 0;}
+//			cerr << "Here 3" << endl;
 			for (i=0; i<nedges; i++) {
+				assert(1 <= vpair[i].v && vpair[i].v <= nvertices);
+				assert(1 <= vpair[i].w && vpair[i].w <= nvertices);
 				degree[vpair[i].v] ++;
 				degree[vpair[i].w] ++;
 			}
+//			cerr << "Here 4" << endl;
 
 			//initialize adjacency lists
 			first = new int [nvertices+2]; //skip 0, need first[n+1]
@@ -61,6 +75,7 @@ class Graph {
 			//set first values
 			first[0] = 0;
 			for (v=1; v<=nvertices+1; v++) {first[v] = first[v-1] + degree[v-1];}
+//			cerr << "Here 5" << endl;
 
 			//actually add arcs
 			for (i=0; i<nedges; i++) {
@@ -71,10 +86,12 @@ class Graph {
 				alist[first[v]++].head = w;
 				alist[first[w]++].head = v;
 			}
+//			cerr << "Here 6" << endl;
 
 			//reset first values
 			first[0] = 0;
 			for (v=1; v<=nvertices+1; v++) {first[v] = first[v-1] + degree[v-1];}
+//			cerr << "Here 7" << endl;
 
 			delete [] degree;
 		}
@@ -82,10 +99,11 @@ class Graph {
 
 	public:
 		//constructor (empty graph)
-		Graph() {
+		Graph(int te = 0, int tv = 0) {
 			first = NULL;
 			alist = NULL;
-			nedges = nvertices = 0;
+			nedges = te;
+			nvertices = tv;
 		}
 
 		//number of vertices in the graph

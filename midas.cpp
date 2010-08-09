@@ -11,18 +11,19 @@
 #include "evaluator.h"
 #include "myfinder.h"
 #include "midas_timer.h"
+
 using namespace std;
 
 
 // Generate 'nl' landmarks for graph 'g' using method 'method'.
 // The maximum allowed time (in seconds) for landmark generation is 'maxsec'.
-void GenerateLandmarks(Graph *g, int nl, int method, double maxsec) {
+void GenerateLandmarks(Graph *g, int nl, int method, double maxsec, int radius, int t1, int t2,  int points, int upper, int pool, int randc) {
 	VertexId *list = new VertexId[nl];
 	MyLandmarkFinder *lf = new MyLandmarkFinder();
 	MIDASTimer *timer = new MIDASTimer (maxsec);
 
 	switch (method) {
-		case 0: lf->GenerateMyLandmarks(g, nl, list, timer); break; //your method
+		case 0: lf->GenerateMyLandmarks(g, nl, list, timer, radius, t1, t2, points, upper, pool, randc); break; //your method
 		case 1: lf->GenerateRandom(g, nl, list, timer); break;      //random
 		case 2: lf->GenerateFarthest(g, nl, list, timer); break;    //farthest
 		default:
@@ -123,12 +124,21 @@ int main(int argc, char** argv) {
 		ShowUsage(argv[0]);
 	}
 
+	int radius, t1, t2, points, upper, pool, randc;
+
 	for (int i=3; i<argc; i+=2) {
 		if (strcmp(argv[i], "-seed")==0) {seed = atoi(argv[i+1]); continue;}
 		if (strcmp(argv[i], "-nl")==0) {nl = atoi(argv[i+1]); continue;}
 		if (strcmp(argv[i], "-np")==0) {npairs = atof(argv[i+1]); continue;}
 		if (strcmp(argv[i], "-method")==0) {landmethod = atoi(argv[i+1]); continue;}
 		if (strcmp(argv[i], "-timebound")==0) {timebound = atof(argv[i+1]); continue;}
+		if (strcmp(argv[i], "-radius")==0) {radius= atof(argv[i+1]); continue;}
+		if (strcmp(argv[i], "-t1")==0) {t1= atof(argv[i+1]); continue;}
+		if (strcmp(argv[i], "-t2")==0) {t2= atof(argv[i+1]); continue;}
+		if (strcmp(argv[i], "-pool")==0) {pool= atof(argv[i+1]); continue;}
+		if (strcmp(argv[i], "-upper")==0) {upper= atof(argv[i+1]); continue;}
+		if (strcmp(argv[i], "-points")==0) {points= atof(argv[i+1]); continue;}
+		if (strcmp(argv[i], "-randc")==0) {randc= atof(argv[i+1]); continue;}
 		fprintf (stderr, "Unrecognized input parameter (%s).\n", argv[i]);
 		ShowUsage(argv[0]);
 	}
@@ -137,7 +147,7 @@ int main(int argc, char** argv) {
 	if (strcmp(argv[1], "-evaluate")==0) {
 		EvaluateLandmarks(g, npairs);
 	} else if (strcmp(argv[1], "-generate")==0) {
-		GenerateLandmarks(g, nl, landmethod, timebound);
+		GenerateLandmarks(g, nl, landmethod, timebound, radius, t1, t2,  points, upper, pool, randc);
 	} else ShowUsage(argv[0]);
 	delete g;
 

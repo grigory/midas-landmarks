@@ -13,7 +13,7 @@ SOURCES = midas.cpp \
 #
 
 GCC_NAME    = g++
-GCC_FLAGS   = -O4 
+GCC_FLAGS   = -O4 -fopenmp
 GCC_LIBS    = -lm -L/usr/lib32/
 GCC_DEFINES = 
 GCC_OBJECTS = $(SOURCES:.cpp=.o)
@@ -45,7 +45,7 @@ clean:
 # OBJECT FILES DEPENDENCIES
 #
 midas.o: midas.cpp graph.h vpair.h typmidas.h mt_random.h evaluator.h \
- dijkstra.h binheap.h myfinder.h landfind.h midas_timer.h hhfinder.h
+ dijkstra.h binheap.h myfinder.h landfind.h midas_timer.h hhfinder.h reachfinder.h
 
 midas_timer.o: midas_timer.cpp midas_timer.h
 

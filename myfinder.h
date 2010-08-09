@@ -504,7 +504,6 @@ public:
 	}
 	
 	virtual VertexId genCandidate() {
-		return MTRandom::GetInteger(1, RANDC);
 		int r = MTRandom::GetInteger(1, RANDC);
 		if (r <= 1) {
 			return MTRandom::GetInteger(1, n);	

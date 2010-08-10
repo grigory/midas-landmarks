@@ -15,24 +15,138 @@
 #include <assert.h>
 #include <map>
 #include <set>
-#include <omp.h>
+#include "binheap.h"
+//#include <omp.h
 
 #define int64 long long
 
 #define GREEDYINIT true
 
-int UPPER; //10
+int UPPER = 10;
 
-int NEIGHBOURHOODRADIUS; //1000
-int MYTRY;// 20000
-int MYTRY2;// 1000
-int RANDC;
+int NEIGHBOURHOODRADIUS = 1000;
+int MYTRY = 20000;
+int MYTRY2 = 1000;
+int RANDC = 10;
+int POINTS = 2048; 
+int FIRSTPHASE = 800; 
+int LASTPHASE = 990; 
 
-int POINTS;// 2048 
+using namespace std;
 
-int FIRSTPHASE;// 800 
+class MyDijkstra {
+private:
+	Graph *g;
+	BinaryHeap <TCost> *heap;
+	TCost *dist;
+	VertexId *parent;
+	VertexId *scanlist;
+	VertexId nscans;
 
-int LASTPHASE;//990 
+public:
+	MyDijkstra(Graph *_g) {
+		g = _g;
+		VertexId n = g->VertexCount();
+		heap = new BinaryHeap<TCost>(n+1);
+		parent = new VertexId[n+1];
+		dist = new TCost[n+1];
+		scanlist = new VertexId[n];
+		for (VertexId v=1; v<=n; v++) {dist[v] = MIDAS_INFINITY;}
+		nscans = 0;
+	}
+
+	~MyDijkstra() {
+		delete [] scanlist;
+		delete [] dist;
+		delete [] parent; 
+		delete heap;
+	}
+
+	//parent of vertex v in the shortest path tree from the root
+	inline VertexId GetParent(VertexId v) const {return parent[v];}
+
+	//distance from the root to vertex v
+	inline TCost GetDistance(VertexId v) const {return dist[v];}
+
+	//return the i-th vertex scanned (with i=0...n-1)
+	inline VertexId GetScannedVertex(VertexId i) const {return scanlist[i];}
+	
+	//Run Dijkstra's algorithm from vertex r. Updates the internal state of this
+	//object (with parent, distance, and scan order information). Use the functions
+	//above to query the internal state.
+	pair<TCost, vector<VertexId> > RunDijkstra(VertexId r, int eps = 0) {
+		bool verbose = false;
+		if (verbose) fprintf (stderr, "Running Dijkstra from %d... ", r);
+		VertexId v, n;
+		n = g->VertexCount(); //vertices have labels from 1 to n
+		if (eps == 0) {
+			eps = n;
+		}
+		if (r<1 || r>n) {
+			fprintf (stderr, "ERROR: Dijkstra's starting vertex %d not in [1,%d].\n", r, n);
+			exit(-1);
+		}
+
+		for (int i = 0; i < nscans; i++) {
+			dist[scanlist[i]] = MIDAS_INFINITY;
+		}
+		
+/*		for(int i = 1; i <= n; i++) {
+			dist[i] = MIDAS_INFINITY;
+		} 
+*/		
+		vector<VertexId> vertices;
+		vertices.reserve(eps);
+		nscans = 0;
+		heap->Reset();
+		
+		TCost ret = 0;
+
+		dist[r] = 0;
+		parent[r] = r;
+		heap->Insert(r,0);
+		while (!heap->IsEmpty()) {
+			TCost vdist;
+			unsigned int v;
+			heap->RemoveFirst(v,vdist);
+
+			scanlist[nscans] = v;
+			nscans ++;
+
+			if (nscans > eps) {
+				continue;
+			}
+			vertices.push_back(v);	
+			ret = max(ret, dist[v]);
+
+			Arc *a, *end;
+			for (g->GetBounds(v,a,end); a<end; a++) {
+				VertexId w = a->head;
+				TCost wdist = vdist + a->cost;
+				if (wdist < dist[w]) {
+					dist[w] = wdist;
+					heap->FixKey(w,wdist);
+					parent[w] = v;
+				}
+			}
+		}
+		if (verbose) fprintf (stderr, "done (%d nodes visited).\n", nscans);
+
+		return make_pair(ret, vertices);
+
+/*		if (nscans != g->VertexCount()) {
+			fprintf (stderr, "ERROR: Dijkstra visited only %d/%d vertices.\n", nscans, g->VertexCount());
+			fprintf (stderr, "(Maybe graph is disconnected?)\n");
+			exit(-1);
+		}*/
+	}
+};
+
+
+
+
+
+
 
 #define LOWERCANDIDATES 1
 #define LOWERITERATIONS 1000000
@@ -47,7 +161,7 @@ int LASTPHASE;//990
 #define MUL ((double)1.2)
 
 int n;
-Dijkstra * dij;
+MyDijkstra * dij;
 MIDASTimer * timer;
 vector<VertexId> points;
 Graph * g;
@@ -192,7 +306,7 @@ VertexId avoidleaf(VertexId k, int64 * s, vector<VertexId> *& adj) {
 	return avoidleaf(bestv, s, adj);
 }
 
-void generateAdjacentLists(Dijkstra * dij, vector<VertexId> *& adj) {
+void generateAdjacentLists(MyDijkstra * dij, vector<VertexId> *& adj) {
 	adj = new vector<VertexId>[n + 1];
 	for (VertexId i = 1; i <= n; i++) {
 		VertexId p = dij->GetParent(i);
@@ -266,7 +380,7 @@ VertexId findAvoidVertex(const vector<VertexId> & have, const vector<vector<TCos
 	return result;
 }
 
-vector<TCost> getDistancesVector(Dijkstra * dij) {
+vector<TCost> getDistancesVector(MyDijkstra * dij) {
 	vector<TCost> v;
 	v.resize(n + 1);
 	for (int j = 1; j <= n; j++) {
@@ -447,7 +561,7 @@ public:
 	}
 	
 	virtual VertexId genCandidate() {
-		if (MTRandom::GetInteger(1, 10) == 1) {
+		if (MTRandom::GetInteger(1, RANDC) == 1) {
 			return MTRandom::GetInteger(1, n);	
 		} else {
 			return findAvoidVertex(myLandmarks, myLandmarkDistances);
@@ -509,11 +623,6 @@ public:
 			return MTRandom::GetInteger(1, n);	
 		} else {
 			return sortedByRadius[MTRandom::GetInteger(1, MYTRY)]; 
-		}
-		if (!CORE) {
-			return MTRandom::GetInteger(1, n);
-		} else { 
-			return coreVertices[MTRandom::GetInteger(0, coreVertices.size() - 1)];
 		}
 	}
 	
@@ -642,21 +751,21 @@ class MyLandmarkFinder : public LandmarkFinder {
 		lso.optimize(iterations, candidates);
 	}
 	
-	void GenerateMyLandmarks(Graph * _g, VertexId k, VertexId *list, MIDASTimer * _timer, int radius, int t1, int t2, int _points, int upper, int pool, int randc) {
-		NEIGHBOURHOODRADIUS = radius;
+	void GenerateMyLandmarks(Graph * _g, VertexId k, VertexId *list, MIDASTimer * _timer/*, int radius, int t1, int t2, int _points, int upper, int pool, int randc*/) {
+/*		NEIGHBOURHOODRADIUS = radius;
 		FIRSTPHASE = t1;
 		LASTPHASE = t2;
 		POINTS = _points;
 		UPPER = upper;
 		MYTRY = pool;
 		RANDC = randc;
-
+*/
 
 		le = new LandmarkEvaluator();
 		g = _g;
 		timer = _timer;
 		n = g->VertexCount();
-		dij = new Dijkstra(g);
+		dij = new MyDijkstra(g);
 		points = genRandomCheckpoints(POINTS);	
 //		coreVertices = getCoreVertices(COREDEPTH);
 //		cerr << "CORE SIZE = " << coreVertices.size() << endl;

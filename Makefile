@@ -45,7 +45,7 @@ clean:
 # OBJECT FILES DEPENDENCIES
 #
 midas.o: midas.cpp graph.h vpair.h typmidas.h mt_random.h evaluator.h \
- dijkstra.h binheap.h myfinder.h landfind.h midas_timer.h hhfinder.h reachfinder.h
+ dijkstra.h binheap.h myfinder.h landfind.h midas_timer.h
 
 midas_timer.o: midas_timer.cpp midas_timer.h
 

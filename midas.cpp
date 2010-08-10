@@ -17,13 +17,13 @@ using namespace std;
 
 // Generate 'nl' landmarks for graph 'g' using method 'method'.
 // The maximum allowed time (in seconds) for landmark generation is 'maxsec'.
-void GenerateLandmarks(Graph *g, int nl, int method, double maxsec, int radius, int t1, int t2,  int points, int upper, int pool, int randc) {
+void GenerateLandmarks(Graph *g, int nl, int method, double maxsec/*, int radius, int t1, int t2,  int points, int upper, int pool, int randc*/) {
 	VertexId *list = new VertexId[nl];
 	MyLandmarkFinder *lf = new MyLandmarkFinder();
 	MIDASTimer *timer = new MIDASTimer (maxsec);
 
 	switch (method) {
-		case 0: lf->GenerateMyLandmarks(g, nl, list, timer, radius, t1, t2, points, upper, pool, randc); break; //your method
+		case 0: lf->GenerateMyLandmarks(g, nl, list, timer/*, radius, t1, t2, points, upper, pool, randc*/); break; //your method
 		case 1: lf->GenerateRandom(g, nl, list, timer); break;      //random
 		case 2: lf->GenerateFarthest(g, nl, list, timer); break;    //farthest
 		default:
@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
 	if (strcmp(argv[1], "-evaluate")==0) {
 		EvaluateLandmarks(g, npairs);
 	} else if (strcmp(argv[1], "-generate")==0) {
-		GenerateLandmarks(g, nl, landmethod, timebound, radius, t1, t2,  points, upper, pool, randc);
+		GenerateLandmarks(g, nl, landmethod, timebound/*, radius, t1, t2,  points, upper, pool, randc*/);
 	} else ShowUsage(argv[0]);
 	delete g;
 
